@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>HOST</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23060606'/%3E%3Ccircle cx='16' cy='14' r='10' fill='%23ececec'/%3E%3Ccircle cx='11.5' cy='13' r='2.6' fill='%23060606'/%3E%3Ccircle cx='20.5' cy='13' r='2.6' fill='%23060606'/%3E%3Cpath d='M13 20 L13 25 M16 20 L16 26 M19 20 L19 25' stroke='%23ececec' stroke-width='2'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23060606'/%3E%3Cpath d='M4 10 L4 24 L28 24 L28 12 L16 12 L13 8 L4 8 Z' fill='%23ececec'/%3E%3C/svg%3E">
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Pirata+One&family=Special+Elite&family=PT+Mono&display=swap');
 
@@ -29,10 +29,7 @@
   }
 
   body{
-    background-image:
-      radial-gradient(ellipse at 50% -10%, rgba(122,31,31,0.10), transparent 55%),
-      linear-gradient(rgba(6,6,6,0.82), rgba(6,6,6,0.92)),
-      url('https://narrayt.github.io/host/sources/asdF.png');
+    background-image: url('https://narrayt.github.io/host/sources/asdF.png');
     background-size: cover;
     background-position: center;
     background-attachment: fixed;
@@ -190,14 +187,6 @@
     position:relative;
   }
 
-  .topbar::after{
-    content:'';
-    position:absolute;
-    left:0; bottom:-1px;
-    width:64px; height:1px;
-    background:var(--blood);
-  }
-
   .topbar .brand{
     font-family:'Pirata One', monospace;
     font-size:26px;
@@ -253,14 +242,6 @@
     margin-bottom:18px;
   }
 
-  .manifest-head h2{
-    font-family:'Pirata One', monospace;
-    font-weight:400;
-    font-size:20px;
-    margin:0;
-    letter-spacing:0.5px;
-  }
-
   .tabs{ display:flex; gap:2px; flex-wrap:wrap; }
   .tabs button{
     font-size:12px;
@@ -314,6 +295,7 @@
   }
   .card-thumb img{ width:100%; height:100%; object-fit:cover; }
   .card-thumb.is-image{ cursor:pointer; }
+  .card-thumb.is-text{ cursor:pointer; }
 
   .card-name{
     font-size:12px;
@@ -378,6 +360,53 @@
     max-width:100%;
     max-height:100%;
     border:1px solid var(--iron);
+  }
+
+  #textbox{
+    position:fixed; inset:0;
+    background:rgba(0,0,0,0.9);
+    display:none;
+    align-items:center;
+    justify-content:center;
+    padding:40px;
+    z-index:60;
+  }
+  #textbox.show{ display:flex; }
+  #textbox .textbox-inner{
+    width:100%;
+    max-width:760px;
+    max-height:100%;
+    background:var(--smoke);
+    border:1px solid var(--iron);
+    display:flex;
+    flex-direction:column;
+  }
+  #textbox .textbox-head{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    padding:10px 14px;
+    border-bottom:1px solid var(--iron);
+    font-size:12px;
+    color:var(--ash);
+  }
+  #textbox .textbox-close{
+    cursor:pointer;
+    color:var(--ash);
+    font-size:14px;
+    padding:2px 6px;
+  }
+  #textbox .textbox-close:hover{ color:var(--bone); }
+  #textbox-content{
+    margin:0;
+    padding:16px;
+    overflow:auto;
+    font-size:12.5px;
+    line-height:1.55;
+    white-space:pre-wrap;
+    word-break:break-word;
+    color:var(--bone);
   }
 
   .empty{
@@ -458,7 +487,6 @@
   </div>
 
   <div class="manifest-head">
-    <h2>Файлы</h2>
     <div class="tabs" id="tabs"><button data-filter="all" class="active">все</button></div>
     <span class="refresh" id="refresh-btn" title="обновить">⟳</span>
   </div>
@@ -468,6 +496,15 @@
 
 <div id="toast-stack"></div>
 <div id="lightbox"><img id="lightbox-img" src="" alt=""></div>
+<div id="textbox">
+  <div class="textbox-inner">
+    <div class="textbox-head">
+      <span id="textbox-name"></span>
+      <span class="textbox-close" id="textbox-close">✕</span>
+    </div>
+    <pre id="textbox-content"></pre>
+  </div>
+</div>
 
 <script>
 (function(){
@@ -508,6 +545,7 @@
 
   const IMAGE_EXT = new Set(['png','jpg','jpeg','gif','webp','svg','bmp','ico','avif']);
   const AUDIO_EXT = new Set(['mp3','wav','ogg','flac','m4a','aac','wma','opus']);
+  const TEXT_EXT = new Set(['txt','md','markdown','json','js','mjs','cjs','ts','tsx','jsx','css','html','htm','xml','csv','tsv','log','yml','yaml','ini','conf','cfg','py','java','c','h','cpp','hpp','cs','go','rs','rb','php','sh','bash','sql','toml','env']);
 
   function ext(name){
     const i = name.lastIndexOf('.');
@@ -517,6 +555,7 @@
     const e = ext(name);
     if (IMAGE_EXT.has(e)) return 'image';
     if (AUDIO_EXT.has(e)) return 'audio';
+    if (TEXT_EXT.has(e)) return 'text';
     return 'other';
   }
 
@@ -745,6 +784,8 @@
         thumb = '<div class="card-thumb is-image" data-act="preview" data-url="' + f.download_url + '"><img src="' + f.download_url + '" loading="lazy" alt=""></div>';
       } else if (cat === 'audio'){
         thumb = '<div class="card-thumb glyph">♪</div>';
+      } else if (cat === 'text'){
+        thumb = '<div class="card-thumb is-text glyph" data-act="preview-text" data-url="' + f.download_url + '" data-name="' + escapeAttr(f.name) + '">▤</div>';
       } else {
         thumb = '<div class="card-thumb glyph">▤</div>';
       }
@@ -787,6 +828,10 @@
       openLightbox(target.getAttribute('data-url'));
       return;
     }
+    if (act === 'preview-text'){
+      openTextbox(target.getAttribute('data-url'), target.getAttribute('data-name'));
+      return;
+    }
     const card = target.closest('.card');
     const path = card.getAttribute('data-path');
     if (act === 'copy') copyName(path);
@@ -807,8 +852,36 @@
   lightbox.addEventListener('click', function(e){
     if (e.target === lightbox) closeLightbox();
   });
+
+  const textbox = document.getElementById('textbox');
+  const textboxContent = document.getElementById('textbox-content');
+  const textboxName = document.getElementById('textbox-name');
+  const textboxClose = document.getElementById('textbox-close');
+  async function openTextbox(url, name){
+    textboxName.textContent = name || '';
+    textboxContent.textContent = 'Загрузка…';
+    textbox.classList.add('show');
+    try{
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error('fetch-failed');
+      const text = await res.text();
+      textboxContent.textContent = text;
+    }catch(e){
+      textboxContent.textContent = 'Не удалось загрузить содержимое файла.';
+    }
+  }
+  function closeTextbox(){
+    textbox.classList.remove('show');
+    textboxContent.textContent = '';
+    textboxName.textContent = '';
+  }
+  textbox.addEventListener('click', function(e){
+    if (e.target === textbox) closeTextbox();
+  });
+  textboxClose.addEventListener('click', closeTextbox);
+
   document.addEventListener('keydown', function(e){
-    if (e.key === 'Escape') closeLightbox();
+    if (e.key === 'Escape'){ closeLightbox(); closeTextbox(); }
   });
 
   tabsEl.addEventListener('click', function(e){
