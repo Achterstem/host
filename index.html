@@ -52,11 +52,6 @@
 
   .glyph{ filter:grayscale(1) contrast(1.1); }
 
-  .gothic{
-    font-family:'Pirata One', 'Special Elite', serif;
-    font-weight:400;
-  }
-
   /* ---------- layout shells ---------- */
 
   #login-view{
@@ -266,13 +261,14 @@
     letter-spacing:0.5px;
   }
 
-  .tabs{ display:flex; gap:2px; }
+  .tabs{ display:flex; gap:2px; flex-wrap:wrap; }
   .tabs button{
     font-size:12px;
     padding:6px 10px;
     color:var(--ash);
     cursor:pointer;
     border-bottom:1px solid transparent;
+    white-space:nowrap;
   }
   .tabs button.active{ color:var(--bone); border-bottom-color:var(--blood); }
   .tabs button:hover{ color:var(--bone); }
@@ -300,7 +296,7 @@
     display:flex;
     flex-direction:column;
     align-items:stretch;
-    gap:9px;
+    gap:8px;
     position:relative;
     transition:border-color 0.15s;
   }
@@ -325,6 +321,14 @@
     word-break:break-all;
     line-height:1.35;
     cursor:default;
+  }
+
+  .card-dir{
+    font-size:10px;
+    text-align:center;
+    color:var(--ash);
+    margin-top:-6px;
+    word-break:break-all;
   }
 
   .card-audio audio{
@@ -447,7 +451,7 @@
   </div>
 
   <div class="dropzone" id="dropzone">
-    <p>перетащить файлы или</p>
+    <p id="dropzone-hint">перетащить файлы или</p>
     <button class="btn-outline" id="pick-btn" type="button">выбрать файлы</button>
     <input type="file" id="file-input" multiple style="display:none">
     <div class="status-line" id="status-line"></div>
@@ -455,12 +459,7 @@
 
   <div class="manifest-head">
     <h2>Файлы</h2>
-    <div class="tabs" id="tabs">
-      <button data-filter="all" class="active">все</button>
-      <button data-filter="image">картинки</button>
-      <button data-filter="audio">музыка</button>
-      <button data-filter="other">прочее</button>
-    </div>
+    <div class="tabs" id="tabs"><button data-filter="all" class="active">все</button></div>
     <span class="refresh" id="refresh-btn" title="обновить">⟳</span>
   </div>
 
@@ -484,9 +483,12 @@
   }
   const REPO = detectRepo();
   const API = 'https://api.github.com';
+  const ROOT_DIR = 'sources';
 
   let TOKEN = localStorage.getItem('host_token') || '';
-  let FILES = [];
+  let DEFAULT_BRANCH = '';
+  let FILES = [];       // { name, dir, path, sha, size, download_url }
+  let SECTIONS = [];    // distinct folder keys found under sources/
   let FILTER = 'all';
 
   const IMAGE_EXT = new Set(['png','jpg','jpeg','gif','webp','svg','bmp','ico','avif']);
@@ -503,22 +505,27 @@
     return 'other';
   }
 
+  function encodePathForUrl(path){
+    return path.split('/').map(encodeURIComponent).join('/');
+  }
+
   /* ---------- dom refs ---------- */
-  const loginView   = document.getElementById('login-view');
-  const appView     = document.getElementById('app-view');
-  const tokenInput  = document.getElementById('token-input');
-  const toggleToken = document.getElementById('toggle-token');
-  const enterBtn    = document.getElementById('enter-btn');
-  const loginError  = document.getElementById('login-error');
-  const logoutBtn   = document.getElementById('logout-btn');
-  const dropzone    = document.getElementById('dropzone');
-  const pickBtn     = document.getElementById('pick-btn');
-  const fileInput   = document.getElementById('file-input');
-  const statusLine  = document.getElementById('status-line');
-  const manifestWrap  = document.getElementById('manifest-wrap');
-  const tabsEl      = document.getElementById('tabs');
-  const refreshBtn  = document.getElementById('refresh-btn');
-  const toastStack  = document.getElementById('toast-stack');
+  const loginView    = document.getElementById('login-view');
+  const appView      = document.getElementById('app-view');
+  const tokenInput   = document.getElementById('token-input');
+  const toggleToken  = document.getElementById('toggle-token');
+  const enterBtn     = document.getElementById('enter-btn');
+  const loginError   = document.getElementById('login-error');
+  const logoutBtn    = document.getElementById('logout-btn');
+  const dropzone     = document.getElementById('dropzone');
+  const dropzoneHint = document.getElementById('dropzone-hint');
+  const pickBtn      = document.getElementById('pick-btn');
+  const fileInput    = document.getElementById('file-input');
+  const statusLine   = document.getElementById('status-line');
+  const manifestWrap = document.getElementById('manifest-wrap');
+  const tabsEl       = document.getElementById('tabs');
+  const refreshBtn   = document.getElementById('refresh-btn');
+  const toastStack   = document.getElementById('toast-stack');
 
 
   /* ---------- toast ---------- */
@@ -547,14 +554,28 @@
     return fetch(API + path, Object.assign({}, opts, { headers }));
   }
 
-  function contentsUrl(name){
-    return '/repos/' + REPO.owner + '/' + REPO.repo + '/contents/sources/' + encodeURIComponent(name);
+  function contentsApiPath(fullPath){
+    return '/repos/' + REPO.owner + '/' + REPO.repo + '/contents/' + encodePathForUrl(fullPath);
   }
 
   /* ---------- auth flow ---------- */
-  async function verifyToken(t){
+  async function verifyToken(){
     const res = await gh('/repos/' + REPO.owner + '/' + REPO.repo, {});
-    return res.ok;
+    if (res.ok){
+      try{
+        const data = await res.json();
+        if (data && data.default_branch) DEFAULT_BRANCH = data.default_branch;
+      }catch(e){}
+      return true;
+    }
+    return false;
+  }
+
+  async function ensureDefaultBranch(){
+    if (DEFAULT_BRANCH) return DEFAULT_BRANCH;
+    const ok = await verifyToken();
+    if (!ok || !DEFAULT_BRANCH) throw new Error('no-default-branch');
+    return DEFAULT_BRANCH;
   }
 
   async function login(){
@@ -565,7 +586,7 @@
     enterBtn.textContent = 'Подключаемся…';
     loginError.classList.remove('show');
     try{
-      const ok = await verifyToken(t);
+      const ok = await verifyToken();
       if (!ok) throw new Error('bad-auth');
       localStorage.setItem('host_token', TOKEN);
       showApp();
@@ -581,8 +602,11 @@
 
   function logout(){
     TOKEN = '';
+    DEFAULT_BRANCH = '';
     localStorage.removeItem('host_token');
     FILES = [];
+    SECTIONS = [];
+    FILTER = 'all';
     appView.classList.remove('visible');
     loginView.classList.remove('hidden');
     tokenInput.value = '';
@@ -597,18 +621,35 @@
   async function loadManifest(){
     setStatus('Загружаем список…');
     try{
-      const res = await gh('/repos/' + REPO.owner + '/' + REPO.repo + '/contents/sources', {});
-      if (res.status === 404){
-        FILES = [];
-      } else if (res.ok){
-        const data = await res.json();
-        FILES = (Array.isArray(data) ? data : [])
-          .filter(function(i){ return i.type === 'file'; })
-          .map(function(i){ return { name:i.name, path:i.path, sha:i.sha, size:i.size, download_url:i.download_url }; })
-          .sort(function(a,b){ return a.name.localeCompare(b.name); });
-      } else {
-        throw new Error('list-failed');
-      }
+      const branch = await ensureDefaultBranch();
+      const res = await gh('/repos/' + REPO.owner + '/' + REPO.repo + '/git/trees/' + encodeURIComponent(branch) + '?recursive=1', {});
+      if (!res.ok) throw new Error('tree-failed');
+      const data = await res.json();
+      const entries = Array.isArray(data.tree) ? data.tree : [];
+      const prefix = ROOT_DIR + '/';
+
+      FILES = entries
+        .filter(function(e){ return e.type === 'blob' && e.path.indexOf(prefix) === 0 && e.path.length > prefix.length; })
+        .map(function(e){
+          const rel = e.path.slice(prefix.length);
+          const slash = rel.lastIndexOf('/');
+          const dir = slash > -1 ? rel.slice(0, slash) : '';
+          const name = slash > -1 ? rel.slice(slash + 1) : rel;
+          return {
+            name: name,
+            dir: dir,
+            path: e.path,
+            sha: e.sha,
+            size: e.size,
+            download_url: 'https://raw.githubusercontent.com/' + REPO.owner + '/' + REPO.repo + '/' + branch + '/' + encodePathForUrl(e.path)
+          };
+        })
+        .sort(function(a,b){
+          if (a.dir !== b.dir) return a.dir.localeCompare(b.dir);
+          return a.name.localeCompare(b.name);
+        });
+
+      computeSections();
       render();
     }catch(e){
       toast('Не удалось загрузить список файлов.', true);
@@ -617,13 +658,46 @@
     }
   }
 
-  function pageUrl(name){
-    return 'https://' + REPO.owner + '.github.io/' + REPO.repo + '/sources/' + encodeURIComponent(name);
+  function computeSections(){
+    const set = new Set();
+    FILES.forEach(function(f){ set.add(f.dir); });
+    SECTIONS = Array.from(set).sort(function(a,b){
+      if (a === b) return 0;
+      if (a === '') return -1;
+      if (b === '') return 1;
+      return a.localeCompare(b);
+    });
+    if (FILTER !== 'all' && SECTIONS.indexOf(FILTER) === -1) FILTER = 'all';
+    renderTabs();
+    updateDropHint();
   }
 
-  async function copyName(name){
+  function renderTabs(){
+    let html = '<button data-filter="all" class="' + (FILTER === 'all' ? 'active' : '') + '">все</button>';
+    SECTIONS.forEach(function(s){
+      const label = s === '' ? 'без раздела' : s;
+      html += '<button data-filter="' + escapeAttr(s) + '" class="' + (FILTER === s ? 'active' : '') + '">' + escapeHtml(label) + '</button>';
+    });
+    tabsEl.innerHTML = html;
+  }
+
+  function updateDropHint(){
+    if (FILTER === 'all'){
+      dropzoneHint.textContent = 'перетащить файлы или';
+    } else if (FILTER === ''){
+      dropzoneHint.textContent = 'файлы попадут в корень раздела — перетащить или';
+    } else {
+      dropzoneHint.textContent = 'файлы попадут в «' + FILTER + '» — перетащить или';
+    }
+  }
+
+  function pageUrl(path){
+    return 'https://' + REPO.owner + '.github.io/' + REPO.repo + '/' + encodePathForUrl(path);
+  }
+
+  async function copyName(path){
     try{
-      await navigator.clipboard.writeText(pageUrl(name));
+      await navigator.clipboard.writeText(pageUrl(path));
       toast('Ссылка скопирована.');
     }catch(e){
       toast('Не удалось скопировать.', true);
@@ -632,7 +706,7 @@
 
   /* ---------- render ---------- */
   function render(){
-    const visible = FILTER === 'all' ? FILES : FILES.filter(function(f){ return category(f.name) === FILTER; });
+    const visible = FILTER === 'all' ? FILES : FILES.filter(function(f){ return f.dir === FILTER; });
 
     if (FILES.length === 0){
       manifestWrap.innerHTML = '<div class="empty">Пока пусто. Добавь первый файл.</div>';
@@ -659,10 +733,15 @@
         ? ('<div class="card-audio"><audio controls preload="none" src="' + f.download_url + '"></audio></div>')
         : '';
 
+      const dirTag = (FILTER === 'all' && f.dir)
+        ? ('<div class="card-dir">' + escapeHtml(f.dir) + '</div>')
+        : '';
+
       cards += '' +
-        '<div class="card" data-name="' + escapeAttr(f.name) + '">' +
+        '<div class="card" data-path="' + escapeAttr(f.path) + '">' +
           thumb +
           '<div class="card-name" data-act="copy">' + escapeHtml(f.name) + '</div>' +
+          dirTag +
           audioRow +
           '<div class="card-actions">' +
             '<span class="icon-btn" data-act="rename" title="переименовать">✎</span>' +
@@ -690,10 +769,10 @@
       return;
     }
     const card = target.closest('.card');
-    const name = card.getAttribute('data-name');
-    if (act === 'copy') copyName(name);
-    if (act === 'delete') deleteFile(name);
-    if (act === 'rename') startRename(card, name);
+    const path = card.getAttribute('data-path');
+    if (act === 'copy') copyName(path);
+    if (act === 'delete') deleteFile(path);
+    if (act === 'rename') startRename(card, path);
   });
 
   const lightbox = document.getElementById('lightbox');
@@ -718,18 +797,21 @@
     if (!btn) return;
     FILTER = btn.getAttribute('data-filter');
     Array.from(tabsEl.querySelectorAll('button')).forEach(function(b){ b.classList.toggle('active', b === btn); });
+    updateDropHint();
     render();
   });
 
   refreshBtn.addEventListener('click', loadManifest);
 
   /* ---------- rename ---------- */
-  function startRename(card, oldName){
+  function startRename(card, path){
+    const f = FILES.find(function(x){ return x.path === path; });
+    if (!f) return;
     const current = card.querySelector('.card-name');
     if (!current) return;
     const input = document.createElement('input');
     input.className = 'rename-input';
-    input.value = oldName;
+    input.value = f.name;
     current.replaceWith(input);
     input.focus();
     input.select();
@@ -738,7 +820,7 @@
     function commit(){
       if (done) return; done = true;
       const val = input.value.trim();
-      if (val && val !== oldName) renameFile(oldName, val);
+      if (val && val !== f.name) renameFile(path, val);
       else render();
     }
     input.addEventListener('keydown', function(e){
@@ -753,7 +835,7 @@
   }
 
   async function getFileContent(path, sha){
-    const res = await gh('/repos/' + REPO.owner + '/' + REPO.repo + '/contents/' + path, {});
+    const res = await gh(contentsApiPath(path), {});
     if (res.ok){
       const data = await res.json();
       if (data.content) return data.content.replace(/\n/g, '');
@@ -764,30 +846,33 @@
     return blob.content.replace(/\n/g, '');
   }
 
-  async function renameFile(oldName, newNameRaw){
+  async function renameFile(oldPath, newNameRaw){
     const newName = sanitizeName(newNameRaw);
-    if (!newName || newName === oldName){ render(); return; }
-    const old = FILES.find(function(f){ return f.name === oldName; });
+    const old = FILES.find(function(f){ return f.path === oldPath; });
     if (!old) return;
+    if (!newName || newName === old.name){ render(); return; }
+
+    const newPath = ROOT_DIR + (old.dir ? '/' + old.dir : '') + '/' + newName;
+    if (newPath === oldPath){ render(); return; }
 
     setStatus('Переименовываем…');
     try{
-      const content = await getFileContent(old.path, old.sha);
-      const target = FILES.find(function(f){ return f.name === newName; });
-      const putBody = { message: 'переименовано: ' + oldName + ' \u2192 ' + newName, content: content };
+      const content = await getFileContent(oldPath, old.sha);
+      const target = FILES.find(function(f){ return f.path === newPath; });
+      const putBody = { message: 'переименовано: ' + oldPath + ' \u2192 ' + newPath, content: content };
       if (target) putBody.sha = target.sha;
 
-      const putRes = await gh(contentsUrl(newName), {
+      const putRes = await gh(contentsApiPath(newPath), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(putBody)
       });
       if (!putRes.ok) throw new Error('rename-create-failed');
 
-      const delRes = await gh(contentsUrl(oldName), {
+      const delRes = await gh(contentsApiPath(oldPath), {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: 'удалено старое имя: ' + oldName, sha: old.sha })
+        body: JSON.stringify({ message: 'удалено старое имя: ' + oldPath, sha: old.sha })
       });
       if (!delRes.ok) throw new Error('rename-delete-failed');
 
@@ -802,16 +887,16 @@
   }
 
   /* ---------- delete ---------- */
-  async function deleteFile(name){
-    const f = FILES.find(function(x){ return x.name === name; });
+  async function deleteFile(path){
+    const f = FILES.find(function(x){ return x.path === path; });
     if (!f) return;
-    if (!confirm('Удалить «' + name + '»?')) return;
+    if (!confirm('Удалить «' + f.name + '»?')) return;
     setStatus('Удаляем…');
     try{
-      const res = await gh(contentsUrl(name), {
+      const res = await gh(contentsApiPath(path), {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: 'удалено: ' + name, sha: f.sha })
+        body: JSON.stringify({ message: 'удалено: ' + path, sha: f.sha })
       });
       if (!res.ok) throw new Error('delete-failed');
       await loadManifest();
@@ -835,28 +920,30 @@
     return btoa(binary);
   }
 
-  async function uploadOne(file){
+  async function uploadOne(file, targetDir){
     const name = sanitizeName(file.name);
+    const fullPath = ROOT_DIR + (targetDir ? '/' + targetDir : '') + '/' + name;
     const content = await readBase64(file);
-    const existing = FILES.find(function(f){ return f.name === name; });
-    const body = { message: 'добавлено: ' + name, content: content };
+    const existing = FILES.find(function(f){ return f.path === fullPath; });
+    const body = { message: 'добавлено: ' + fullPath, content: content };
     if (existing) body.sha = existing.sha;
-    const res = await gh(contentsUrl(name), {
+    const res = await gh(contentsApiPath(fullPath), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
-    if (!res.ok) throw new Error('upload-failed: ' + name);
+    if (!res.ok) throw new Error('upload-failed: ' + fullPath);
   }
 
   async function uploadFiles(fileList){
     const files = Array.from(fileList);
     if (!files.length) return;
+    const targetDir = FILTER === 'all' ? '' : FILTER;
     let okCount = 0;
     for (let i=0; i<files.length; i++){
       setStatus('Загружаем файлы… (' + (i+1) + '/' + files.length + ')');
       try{
-        await uploadOne(files[i]);
+        await uploadOne(files[i], targetDir);
         okCount++;
       }catch(e){
         toast('Не вышло загрузить «' + files[i].name + '».', true);
@@ -902,7 +989,7 @@
     if (TOKEN){
       showApp();
       try{
-        const ok = await verifyToken(TOKEN);
+        const ok = await verifyToken();
         if (!ok) throw new Error('stale-token');
         await loadManifest();
       }catch(e){
