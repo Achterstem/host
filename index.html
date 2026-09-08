@@ -483,12 +483,27 @@
   }
   const REPO = detectRepo();
   const API = 'https://api.github.com';
-  const ROOT_DIR = 'sources';
+  const IS_USER_SITE = REPO.repo.toLowerCase() === (REPO.owner + '.github.io').toLowerCase();
+
+  /* path of the page currently running this app, relative to repo root — always excluded from the listing */
+  function selfPath(){
+    let segs = location.pathname.split('/').filter(Boolean);
+    if (!IS_USER_SITE && segs.length) segs = segs.slice(1);
+    let path = segs.join('/');
+    if (!path) path = 'index.html';
+    else if (!/\.[^\/]+$/.test(path)) path = path + '/index.html';
+    return path;
+  }
+  const SELF_PATH = selfPath();
+
+  function isHidden(path){
+    return path.split('/').some(function(seg){ return seg.indexOf('.') === 0; });
+  }
 
   let TOKEN = localStorage.getItem('host_token') || '';
   let DEFAULT_BRANCH = '';
-  let FILES = [];       // { name, dir, path, sha, size, download_url }
-  let SECTIONS = [];    // distinct folder keys found under sources/
+  let FILES = [];       // { name, dir, topDir, path, sha, size, download_url }
+  let SECTIONS = [];    // distinct top-level folders found at repo root
   let FILTER = 'all';
 
   const IMAGE_EXT = new Set(['png','jpg','jpeg','gif','webp','svg','bmp','ico','avif']);
@@ -507,6 +522,14 @@
 
   function encodePathForUrl(path){
     return path.split('/').map(encodeURIComponent).join('/');
+  }
+
+  function splitPath(path){
+    const idx = path.lastIndexOf('/');
+    const name = idx > -1 ? path.slice(idx + 1) : path;
+    const dir = idx > -1 ? path.slice(0, idx) : '';
+    const topDir = dir ? dir.split('/')[0] : '';
+    return { name: name, dir: dir, topDir: topDir };
   }
 
   /* ---------- dom refs ---------- */
@@ -626,18 +649,15 @@
       if (!res.ok) throw new Error('tree-failed');
       const data = await res.json();
       const entries = Array.isArray(data.tree) ? data.tree : [];
-      const prefix = ROOT_DIR + '/';
 
       FILES = entries
-        .filter(function(e){ return e.type === 'blob' && e.path.indexOf(prefix) === 0 && e.path.length > prefix.length; })
+        .filter(function(e){ return e.type === 'blob' && e.path !== SELF_PATH && !isHidden(e.path); })
         .map(function(e){
-          const rel = e.path.slice(prefix.length);
-          const slash = rel.lastIndexOf('/');
-          const dir = slash > -1 ? rel.slice(0, slash) : '';
-          const name = slash > -1 ? rel.slice(slash + 1) : rel;
+          const p = splitPath(e.path);
           return {
-            name: name,
-            dir: dir,
+            name: p.name,
+            dir: p.dir,
+            topDir: p.topDir,
             path: e.path,
             sha: e.sha,
             size: e.size,
@@ -660,7 +680,7 @@
 
   function computeSections(){
     const set = new Set();
-    FILES.forEach(function(f){ set.add(f.dir); });
+    FILES.forEach(function(f){ set.add(f.topDir); });
     SECTIONS = Array.from(set).sort(function(a,b){
       if (a === b) return 0;
       if (a === '') return -1;
@@ -685,14 +705,14 @@
     if (FILTER === 'all'){
       dropzoneHint.textContent = 'перетащить файлы или';
     } else if (FILTER === ''){
-      dropzoneHint.textContent = 'файлы попадут в корень раздела — перетащить или';
+      dropzoneHint.textContent = 'файлы попадут в корень репозитория — перетащить или';
     } else {
       dropzoneHint.textContent = 'файлы попадут в «' + FILTER + '» — перетащить или';
     }
   }
 
   function pageUrl(path){
-    return 'https://' + REPO.owner + '.github.io/' + REPO.repo + '/' + encodePathForUrl(path);
+    return 'https://' + REPO.owner + '.github.io/' + (IS_USER_SITE ? '' : REPO.repo + '/') + encodePathForUrl(path);
   }
 
   async function copyName(path){
@@ -706,7 +726,7 @@
 
   /* ---------- render ---------- */
   function render(){
-    const visible = FILTER === 'all' ? FILES : FILES.filter(function(f){ return f.dir === FILTER; });
+    const visible = FILTER === 'all' ? FILES : FILES.filter(function(f){ return f.topDir === FILTER; });
 
     if (FILES.length === 0){
       manifestWrap.innerHTML = '<div class="empty">Пока пусто. Добавь первый файл.</div>';
@@ -733,9 +753,8 @@
         ? ('<div class="card-audio"><audio controls preload="none" src="' + f.download_url + '"></audio></div>')
         : '';
 
-      const dirTag = (FILTER === 'all' && f.dir)
-        ? ('<div class="card-dir">' + escapeHtml(f.dir) + '</div>')
-        : '';
+      const showDirTag = f.dir && (FILTER === 'all' || f.dir !== FILTER);
+      const dirTag = showDirTag ? ('<div class="card-dir">' + escapeHtml(f.dir) + '</div>') : '';
 
       cards += '' +
         '<div class="card" data-path="' + escapeAttr(f.path) + '">' +
@@ -852,7 +871,7 @@
     if (!old) return;
     if (!newName || newName === old.name){ render(); return; }
 
-    const newPath = ROOT_DIR + (old.dir ? '/' + old.dir : '') + '/' + newName;
+    const newPath = (old.dir ? old.dir + '/' : '') + newName;
     if (newPath === oldPath){ render(); return; }
 
     setStatus('Переименовываем…');
@@ -922,7 +941,7 @@
 
   async function uploadOne(file, targetDir){
     const name = sanitizeName(file.name);
-    const fullPath = ROOT_DIR + (targetDir ? '/' + targetDir : '') + '/' + name;
+    const fullPath = (targetDir ? targetDir + '/' : '') + name;
     const content = await readBase64(file);
     const existing = FILES.find(function(f){ return f.path === fullPath; });
     const body = { message: 'добавлено: ' + fullPath, content: content };
